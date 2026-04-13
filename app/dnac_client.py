@@ -87,26 +87,24 @@ class DNACClient:
         if event_categories:
             subscription_filter["categories"] = event_categories
 
+        # The /rest endpoint expects a list of objects exactly in this schema
         payload = [
             {
                 "name": name,
                 "description": description,
-                "subscriptionEndpoints": [
-                    {
-                        "instanceId": f"{name}-endpoint",
-                        "subscriptionDetails": {
-                            "connectorType": "REST",
-                            "url": receiver_url,
-                            "method": "POST",
-                            "headers": [{"string": "Content-Type: application/json"}]
-                        }
-                    }
-                ],
-                "filter": subscription_filter
+                "filter": subscription_filter,
+                "subscriptionDetails": {
+                    "connectorType": "REST",
+                    "method": "POST",
+                    "url": receiver_url,
+                    "headers": [
+                         {"string": "Content-Type: application/json"}
+                    ]
+                }
             }
         ]
 
-        # NOTE: REST subscriptions use the /rest sub-endpoint, not /event/subscription
+        # Use the REST-specific endpoint
         register_url = f"{self.base_url}/dna/intent/api/v1/event/subscription/rest"
 
         logger.info(f"Registering webhook with DNAC. Receiver URL: {receiver_url}")
