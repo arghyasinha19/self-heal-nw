@@ -1,0 +1,30 @@
+dnac:
+  base_url: "https://sandboxdnac.cisco.com"   # Replace with your DNAC IP/Hostname
+  username: "${DNAC_USERNAME}"                  # Loaded from .env file
+  password: "${DNAC_PASSWORD}"                  # Loaded from .env file
+  verify_ssl: false
+
+  # Webhook registration settings
+  webhook_registration:
+    enabled: true           # Set to false to register manually via DNAC UI
+    name: "FalseAlertDetection"
+    description: "Webhook receiver for false alert ML pipeline"
+    # This must be the public/reachable URL of THIS service.
+    receiver_url: "http://YOUR_SERVER_IP:8000/api/v1/webhook"
+    # Only subscribe to alerts from these categories. Leave empty [] for ALL events.
+    # Common values: "Switches and Hubs", "Routers", "Wireless", "Application", "Security"
+    event_categories:
+      - "Switches and Hubs"
+      - "Routers"
+
+rabbitmq:
+  host: "localhost"
+  port: 5672
+  username: "${RABBITMQ_USERNAME}"             # Loaded from .env file
+  password: "${RABBITMQ_PASSWORD}"             # Loaded from .env file
+  queue: "dnac_alerts"
+  exchange: ""
+
+server:
+  port: 8000
+  host: "0.0.0.0"
