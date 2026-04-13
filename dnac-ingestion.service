@@ -1,0 +1,30 @@
+[Unit]
+Description=DNAC Webhook Ingestion Service (FastAPI)
+After=network.target
+
+[Service]
+# Ensure these match the user and directory on your Ubuntu EC2 instance
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/DNAC
+
+# Point the PATH to your python virtual environment
+Environment="PATH=/home/ubuntu/DNAC/venv/bin"
+
+# Read environment variables directly if needed (though Python dotenv usually handles this)
+# EnvironmentFile=/home/ubuntu/DNAC/.env
+
+# Start uvicorn server
+ExecStart=/home/ubuntu/DNAC/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+
+# Auto-restart on failure
+Restart=always
+RestartSec=5
+
+# Standard logging
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=dnac-webhook
+
+[Install]
+WantedBy=multi-user.target
