@@ -54,9 +54,19 @@ class DNACClient:
     # Webhook Subscription Management
     # -------------------------------------------------------------------------
     def list_event_subscriptions(self) -> list:
-        """List all current webhook subscriptions registered in DNAC."""
+        """
+        List all current webhook subscriptions registered in DNAC.
+        Returns an empty list if DNAC responds with 204 No Content
+        (which means no subscriptions exist yet).
+        """
         url = f"{self.base_url}/dna/intent/api/v1/event/subscription"
         response = requests.get(url, headers=self._get_headers(), verify=self.verify_ssl)
+
+        # 204 No Content = no subscriptions registered yet — not an error
+        if response.status_code == 204:
+            logger.info("DNAC returned 204 — no webhook subscriptions registered yet.")
+            return []
+
         response.raise_for_status()
         return response.json()
 
