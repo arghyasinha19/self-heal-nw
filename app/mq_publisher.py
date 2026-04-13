@@ -31,6 +31,7 @@ class RabbitMQPublisher:
         # Read credentials from env vars first, fall back to config dict
         self.username = os.environ.get('RABBITMQ_USERNAME') or config.get('username', 'guest')
         self.password = os.environ.get('RABBITMQ_PASSWORD') or config.get('password', 'guest')
+        self.vhost = config.get('vhost', '/')
         self.queue_name = config['queue']
         self.exchange = config.get('exchange', '')
         self._connection: Optional[pika.BlockingConnection] = None
@@ -44,6 +45,7 @@ class RabbitMQPublisher:
         return pika.ConnectionParameters(
             host=self.host,
             port=self.port,
+            virtual_host=self.vhost,
             credentials=credentials,
             heartbeat=600,                    # Keep connection alive under load
             blocked_connection_timeout=300    # Raise error if broker blocks for too long

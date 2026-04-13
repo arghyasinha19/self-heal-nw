@@ -10,14 +10,13 @@ dnac:
     # Call POST /api/v1/subscriptions/register once via Swagger to register.
     receiver_url: "http://YOUR_SERVER_IP:8000/api/v1/webhook"
     # Alert categories to subscribe to. Leave empty [] for ALL categories.
-    # Common values: "Switches and Hubs", "Routers", "Wireless", "Security"
-    event_categories:
-      - "Switches and Hubs"
-      - "Routers"
+    # We leave this empty because DNAC requires strict internal ENUMs for filters.
+    event_categories: []
 
 rabbitmq:
   host: "localhost"
   port: 5672
+  vhost: "/vhost"
   queue: "dnac_alerts"
   exchange: ""
 
