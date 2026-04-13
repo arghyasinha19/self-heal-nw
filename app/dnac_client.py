@@ -98,9 +98,7 @@ class DNACClient:
                             "connectorType": "REST",
                             "url": receiver_url,
                             "method": "POST",
-                            "headers": {
-                                "Content-Type": "application/json"
-                            }
+                            "headers": [{"string": "Content-Type: application/json"}]
                         }
                     }
                 ],
@@ -110,7 +108,6 @@ class DNACClient:
 
         # NOTE: REST subscriptions use the /rest sub-endpoint, not /event/subscription
         register_url = f"{self.base_url}/dna/intent/api/v1/event/subscription/rest"
-        list_url     = f"{self.base_url}/dna/intent/api/v1/event/subscription"
 
         logger.info(f"Registering webhook with DNAC. Receiver URL: {receiver_url}")
 
@@ -141,51 +138,6 @@ class DNACClient:
             result[0].get('subscriptionId') if isinstance(result, list)
             else result.get('subscriptionId')
         )
-        logger.info(f"Webhook registered successfully. Subscription ID: {self._subscription_id}")
-        return result
-
-        # Build the subscription filter by category
-        filter_payload = {}
-        if event_categories:
-            filter_payload["eventIds"] = []  # Can be specific event IDs OR use category filter below
-            filter_payload["categories"] = event_categories
-
-        payload = [
-            {
-                "name": name,
-                "description": description,
-                "subscriptionEndpoints": [
-                    {
-                        "instanceId": f"{name}-endpoint",
-                        "subscriptionDetails": {
-                            "connectorType": "REST",
-                            "url": receiver_url,
-                            "method": "POST",
-                            "headers": [
-                                {"string": "Content-Type: application/json"}
-                            ]
-                        }
-                    }
-                ],
-                "filter": filter_payload
-            }
-        ]
-
-        url = f"{self.base_url}/dna/intent/api/v1/event/subscription"
-        logger.info(f"Registering webhook with DNAC. Receiver URL: {receiver_url}")
-
-        # Check if already registered to avoid duplicates
-        existing = self.list_event_subscriptions()
-        for sub in existing:
-            if sub.get('name') == name:
-                self._subscription_id = sub.get('subscriptionId')
-                logger.info(f"Webhook '{name}' already registered (ID: {self._subscription_id}). Skipping.")
-                return sub
-
-        response = requests.post(url, headers=self._get_headers(), json=payload, verify=self.verify_ssl)
-        response.raise_for_status()
-        result = response.json()
-        self._subscription_id = result[0].get('subscriptionId') if isinstance(result, list) else result.get('subscriptionId')
         logger.info(f"Webhook registered successfully. Subscription ID: {self._subscription_id}")
         return result
 
