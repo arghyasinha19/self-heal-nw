@@ -4,10 +4,13 @@ dnac:
 
   # Webhook registration settings
   webhook_registration:
-    enabled: true
     name: "FalseAlertDetection"
     description: "Webhook receiver for false alert ML pipeline"
+    # Public URL of THIS service that DNAC will push alerts to.
+    # Call POST /api/v1/subscriptions/register once via Swagger to register.
     receiver_url: "http://YOUR_SERVER_IP:8000/api/v1/webhook"
+    # Alert categories to subscribe to. Leave empty [] for ALL categories.
+    # Common values: "Switches and Hubs", "Routers", "Wireless", "Security"
     event_categories:
       - "Switches and Hubs"
       - "Routers"

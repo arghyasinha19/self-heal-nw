@@ -58,15 +58,21 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning(f"  ✘ {var} is NOT set — check your .env file!")
 
+    # Only authenticate to warm up the token.
+    # Webhook registration is a deliberate one-time action — use:
+    #   POST /api/v1/subscriptions/register  (via Swagger at /docs)
     try:
         dnac_client.authenticate()
-        dnac_client.register_webhook()
+        logger.info("DNAC token obtained. Service is ready.")
+        logger.info("➜ To register this service as a DNAC webhook receiver, call:")
+        logger.info("  POST /api/v1/subscriptions/register  (Swagger: http://<host>:8000/docs)")
     except Exception as e:
-        logger.error(f"Startup error during DNAC registration: {e}")
+        logger.error(f"Startup DNAC authentication failed: {e}")
+
     yield
+
     # ── SHUTDOWN ──
     logger.info("Service shutting down...")
-    dnac_client.deregister_webhook()
     mq_publisher.close()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -153,14 +159,12 @@ def list_subscriptions():
 @app.post("/api/v1/subscriptions/register", tags=["Webhook Management"])
 def register_webhook():
     """
-    Manually register this service as a webhook receiver in DNAC.
+    Register this service as a REST/Webhook subscriber in DNAC.
+    DNAC will then push event payloads to our FastAPI receiver_url.
+    This is always a manual, on-demand action — never called automatically.
 
-    This is called automatically on service startup, but you can also trigger
-    it manually here — for example, after changing the receiver_url in config,
-    or if the subscription was deleted from the DNAC side.
-
-    The operation is idempotent: if the subscription already exists (matched by
-    name), DNAC will not create a duplicate.
+    The operation is idempotent: if a subscription with the same name already
+    exists in DNAC, it will be returned as-is without creating a duplicate.
     """
     try:
         # Re-authenticate to ensure the token is fresh before registering

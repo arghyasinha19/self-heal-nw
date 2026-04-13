@@ -63,12 +63,9 @@ class DNACClient:
     def register_webhook(self) -> dict:
         """
         Register this service as a REST/Webhook subscriber in DNAC.
-        DNAC will then push event payloads to our FastAPI receiver_url.
+        DNAC will push event payloads to our FastAPI receiver_url.
+        This is always a manual, on-demand operation — never auto-called on startup.
         """
-        if not self.webhook_config.get('enabled', False):
-            logger.info("Webhook auto-registration is disabled in config. Skipping.")
-            return {}
-
         receiver_url = self.webhook_config['receiver_url']
         name = self.webhook_config.get('name', 'FalseAlertDetection')
         description = self.webhook_config.get('description', '')
