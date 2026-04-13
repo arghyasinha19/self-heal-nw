@@ -2,28 +2,27 @@ import requests
 from requests.auth import HTTPBasicAuth
 import urllib3
 import logging
+import os
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 
 class DNACClient:
-    """
-    Handles DNAC authentication and webhook subscription registration.
-    In the push-based model, we no longer poll for alerts.
-    The only DNAC API calls we make are:
-      1. On startup: Authenticate and register our webhook receiver.
-      2. On shutdown: (Optional) De-register the webhook.
-    """
-
     def __init__(self, config: dict):
         self.base_url = config['base_url'].rstrip('/')
-        self.username = config['username']
-        self.password = config['password']
+        # Read credentials from env vars first, fall back to config dict
+        self.username = os.environ.get('DNAC_USERNAME') or config.get('username')
+        self.password = os.environ.get('DNAC_PASSWORD') or config.get('password')
         self.verify_ssl = config.get('verify_ssl', False)
         self.webhook_config = config.get('webhook_registration', {})
         self.token = None
         self._subscription_id = None
+
+        if not self.username or not self.password:
+            raise ValueError(
+                "DNAC credentials missing. Set DNAC_USERNAME and DNAC_PASSWORD in your .env file."
+            )
 
     # -------------------------------------------------------------------------
     # Authentication

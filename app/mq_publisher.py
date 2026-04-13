@@ -2,6 +2,7 @@ import pika
 import pika.exceptions
 import json
 import logging
+import os
 import time
 from typing import Optional
 
@@ -27,8 +28,9 @@ class RabbitMQPublisher:
     def __init__(self, config: dict):
         self.host = config['host']
         self.port = config.get('port', 5672)
-        self.username = config['username']
-        self.password = config['password']
+        # Read credentials from env vars first, fall back to config dict
+        self.username = os.environ.get('RABBITMQ_USERNAME') or config.get('username', 'guest')
+        self.password = os.environ.get('RABBITMQ_PASSWORD') or config.get('password', 'guest')
         self.queue_name = config['queue']
         self.exchange = config.get('exchange', '')
         self._connection: Optional[pika.BlockingConnection] = None

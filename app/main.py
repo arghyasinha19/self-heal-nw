@@ -1,16 +1,16 @@
 import yaml
 import logging
 import os
-import re
 from contextlib import asynccontextmanager
 from typing import Any
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-# Load .env file so ${VAR} placeholders in config.yaml resolve correctly
-load_dotenv()
+# find_dotenv() walks UP from the CWD until it finds a .env file — works
+# regardless of which directory uvicorn is launched from.
+load_dotenv(find_dotenv(), override=True)
 
 from app.dnac_client import DNACClient
 from app.mq_publisher import RabbitMQPublisher
@@ -29,20 +29,9 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.yaml')
 
-def _interpolate(value):
-    """Recursively resolve ${ENV_VAR} placeholders in config values."""
-    if isinstance(value, str):
-        return re.sub(r'\$\{(\w+)\}', lambda m: os.environ.get(m.group(1), m.group(0)), value)
-    if isinstance(value, dict):
-        return {k: _interpolate(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_interpolate(i) for i in value]
-    return value
-
 def load_config() -> dict:
     with open(CONFIG_PATH, 'r') as f:
-        raw = yaml.safe_load(f)
-    return _interpolate(raw)
+        return yaml.safe_load(f)
 
 config = load_config()
 
@@ -59,6 +48,16 @@ mq_publisher = RabbitMQPublisher(config['rabbitmq'])
 async def lifespan(app: FastAPI):
     # ── STARTUP ──
     logger.info("Service starting up...")
+
+    # Confirm credentials were loaded from .env
+    _required_vars = ["DNAC_USERNAME", "DNAC_PASSWORD", "RABBITMQ_USERNAME", "RABBITMQ_PASSWORD"]
+    for var in _required_vars:
+        val = os.environ.get(var)
+        if val:
+            logger.info(f"  ✔ {var} is set ({len(val)} chars)")
+        else:
+            logger.warning(f"  ✘ {var} is NOT set — check your .env file!")
+
     try:
         dnac_client.authenticate()
         dnac_client.register_webhook()
