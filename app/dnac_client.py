@@ -81,6 +81,69 @@ class DNACClient:
         description = self.webhook_config.get('description', '')
         event_categories = self.webhook_config.get('event_categories', [])
 
+        # Build filter — only include fields DNAC actually supports
+        # Leave eventIds empty to match all events in the chosen categories
+        subscription_filter = {}
+        if event_categories:
+            subscription_filter["categories"] = event_categories
+
+        payload = [
+            {
+                "name": name,
+                "description": description,
+                "subscriptionEndpoints": [
+                    {
+                        "instanceId": f"{name}-endpoint",
+                        "subscriptionDetails": {
+                            "connectorType": "REST",
+                            "url": receiver_url,
+                            "method": "POST",
+                            "headers": {
+                                "Content-Type": "application/json"
+                            }
+                        }
+                    }
+                ],
+                "filter": subscription_filter
+            }
+        ]
+
+        # NOTE: REST subscriptions use the /rest sub-endpoint, not /event/subscription
+        register_url = f"{self.base_url}/dna/intent/api/v1/event/subscription/rest"
+        list_url     = f"{self.base_url}/dna/intent/api/v1/event/subscription"
+
+        logger.info(f"Registering webhook with DNAC. Receiver URL: {receiver_url}")
+
+        # Check if already registered to avoid duplicates
+        existing = self.list_event_subscriptions()
+        for sub in existing:
+            if sub.get('name') == name:
+                self._subscription_id = sub.get('subscriptionId')
+                logger.info(f"Webhook '{name}' already registered (ID: {self._subscription_id}). Skipping.")
+                return sub
+
+        response = requests.post(
+            register_url,
+            headers=self._get_headers(),
+            json=payload,
+            verify=self.verify_ssl
+        )
+
+        # Log full DNAC error body for easy debugging
+        if not response.ok:
+            logger.error(
+                f"DNAC rejected registration: {response.status_code} — {response.text}"
+            )
+        response.raise_for_status()
+
+        result = response.json()
+        self._subscription_id = (
+            result[0].get('subscriptionId') if isinstance(result, list)
+            else result.get('subscriptionId')
+        )
+        logger.info(f"Webhook registered successfully. Subscription ID: {self._subscription_id}")
+        return result
+
         # Build the subscription filter by category
         filter_payload = {}
         if event_categories:
