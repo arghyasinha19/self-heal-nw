@@ -7,6 +7,7 @@ from typing import Any
 from dotenv import load_dotenv, find_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 # find_dotenv() walks UP from the CWD until it finds a .env file — works
 # regardless of which directory uvicorn is launched from.
@@ -42,6 +43,15 @@ dnac_client = DNACClient(config['dnac'])
 mq_publisher = RabbitMQPublisher(config['rabbitmq'])
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Pydantic Models for API
+# ─────────────────────────────────────────────────────────────────────────────
+class ClassifyRequest(BaseModel):
+    description: str
+
+class ClassifyBatchRequest(BaseModel):
+    descriptions: list[str]
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Lifespan: startup / shutdown hooks
 # ─────────────────────────────────────────────────────────────────────────────
 @asynccontextmanager
@@ -69,6 +79,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Startup DNAC authentication failed: {e}")
 
+    # ── Warm up the LangGraph agent pipeline ──
+    classifier_config = config.get("classifier", {})
+    if classifier_config.get("enabled", True):
+        try:
+            from app.agents.graph import get_graph
+            get_graph()  # Compiles the graph; Agent 2 lazy-loads the model on first call
+            logger.info("✔ LangGraph agent pipeline compiled and ready.")
+        except Exception as e:
+            logger.warning(f"⚠ Agent pipeline initialization warning: {e}")
+            logger.warning("  Pipeline will attempt to initialize on first request.")
+    else:
+        logger.info("ℹ Agent pipeline is disabled in config.yaml (classifier.enabled: false)")
+
     yield
 
     # ── SHUTDOWN ──
@@ -79,12 +102,14 @@ async def lifespan(app: FastAPI):
 # App
 # ─────────────────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="DNAC Webhook → RabbitMQ Ingestion Service",
+    title="DNAC Webhook → Agentic Processing → RabbitMQ Service",
     description=(
-        "Receives push-based alert events from Cisco DNA Center via webhook "
-        "and publishes them to RabbitMQ for the false-alert ML pipeline."
+        "Receives push-based alert events from Cisco DNA Center via webhook, "
+        "processes them through a LangGraph multi-agent pipeline "
+        "(Agent 1: upstream processing → Agent 2: DistilBERT classification), "
+        "and publishes enriched events to RabbitMQ."
     ),
-    version="2.0.0",
+    version="3.0.0",
     lifespan=lifespan
 )
 
@@ -95,7 +120,10 @@ app = FastAPI(
 @app.get("/health", tags=["Operations"])
 def health_check():
     """Liveness probe for load balancers / k8s."""
-    return {"status": "healthy", "service": "dnac-webhook-ingestion"}
+    return {
+        "status": "healthy",
+        "service": "dnac-webhook-ingestion",
+    }
 
 
 @app.post("/api/v1/webhook", tags=["Webhook"])
@@ -103,7 +131,11 @@ async def dnac_webhook_receiver(request: Request):
     """
     The HTTP endpoint that Cisco DNAC pushes alert events to.
     DNAC sends a JSON payload for each event matching our subscription filter.
-    We parse it and publish it directly to RabbitMQ.
+
+    Each event is processed through the LangGraph agent pipeline:
+      Agent 1 (upstream) → conditional gate → Agent 2 (classification)
+
+    The enriched event is then published to RabbitMQ.
     """
     try:
         payload: Any = await request.json()
@@ -113,26 +145,161 @@ async def dnac_webhook_receiver(request: Request):
     # DNAC can send a single object or a list of events
     events = payload if isinstance(payload, list) else [payload]
 
+    classifier_enabled = config.get("classifier", {}).get("enabled", True)
     published = 0
+
     for event in events:
         try:
-            # Enrich the event with ingestion metadata
-            event['_source'] = "dnac-webhook"
-            mq_publisher.publish(event)
+            if classifier_enabled:
+                # ── Run through agent pipeline ──
+                from app.agents.graph import run_alert_pipeline
+
+                final_state = run_alert_pipeline(event)
+                enriched_event = final_state.get("enriched_event", event)
+                enriched_event["_workflow_metadata"] = final_state.get("workflow_metadata", {})
+
+                if final_state.get("errors"):
+                    enriched_event["_workflow_errors"] = final_state["errors"]
+            else:
+                # Pipeline disabled — pass through raw
+                enriched_event = event
+                enriched_event["_source"] = "dnac-webhook"
+
+            mq_publisher.publish(enriched_event)
             published += 1
+
             logger.info(
                 f"Published event to RabbitMQ | "
                 f"eventId={event.get('eventId', 'N/A')} | "
                 f"severity={event.get('severity', 'N/A')} | "
-                f"category={event.get('category', 'N/A')}"
+                f"predicted={enriched_event.get('predicted_category', 'N/A')} | "
+                f"confidence={enriched_event.get('prediction_confidence', 'N/A')}"
             )
         except Exception as e:
-            logger.error(f"Failed to publish event {event.get('eventId', 'N/A')}: {e}")
+            logger.error(f"Failed to process/publish event {event.get('eventId', 'N/A')}: {e}")
 
     return JSONResponse(
         status_code=200,
         content={"status": "received", "events_published": published}
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Agent Pipeline Endpoints (for testing & debugging)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post("/api/v1/pipeline/run", tags=["Agent Pipeline"])
+async def run_pipeline(request: Request):
+    """
+    Run a raw event through the full LangGraph agent pipeline.
+    Returns the complete final state including all agent outputs.
+    Useful for debugging the pipeline without publishing to RabbitMQ.
+    """
+    try:
+        event: Any = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload.")
+
+    from app.agents.graph import run_alert_pipeline
+
+    final_state = run_alert_pipeline(event)
+
+    return {
+        "status": "completed",
+        "enriched_event": final_state.get("enriched_event"),
+        "agent1_output": final_state.get("agent1_output"),
+        "agent1_passed": final_state.get("agent1_passed"),
+        "agent2_output": final_state.get("agent2_output"),
+        "errors": final_state.get("errors", []),
+        "workflow_metadata": final_state.get("workflow_metadata", {}),
+    }
+
+
+@app.post("/api/v1/classify", tags=["Agent Pipeline"])
+def classify_description(req: ClassifyRequest):
+    """
+    Classify a single alert description through Agent 2 only.
+    Bypasses Agent 1 — useful for testing the classifier in isolation.
+    """
+    # Build a minimal event and run just the classification
+    from app.agents.graph import run_alert_pipeline
+
+    event = {"description": req.description, "eventId": "manual-test"}
+    final_state = run_alert_pipeline(event)
+
+    enriched = final_state.get("enriched_event", {})
+    classification = enriched.get("_classification", {})
+
+    return {
+        "description": req.description,
+        "predicted_category": enriched.get("predicted_category", "N/A"),
+        "confidence": enriched.get("prediction_confidence", "N/A"),
+        "classification_detail": classification,
+        "workflow_metadata": final_state.get("workflow_metadata", {}),
+    }
+
+
+@app.post("/api/v1/classify/batch", tags=["Agent Pipeline"])
+def classify_batch(req: ClassifyBatchRequest):
+    """
+    Classify multiple alert descriptions through the full pipeline.
+    Each description is run independently through Agent 1 → Agent 2.
+    """
+    from app.agents.graph import run_alert_pipeline
+
+    results = []
+    for desc in req.descriptions:
+        event = {"description": desc, "eventId": "batch-test"}
+        final_state = run_alert_pipeline(event)
+        enriched = final_state.get("enriched_event", {})
+
+        results.append({
+            "description": desc,
+            "predicted_category": enriched.get("predicted_category", "N/A"),
+            "confidence": enriched.get("prediction_confidence", "N/A"),
+        })
+
+    return {"results": results, "total": len(results)}
+
+
+@app.get("/api/v1/pipeline/info", tags=["Agent Pipeline"])
+def pipeline_info():
+    """
+    Return metadata about the agent pipeline and loaded classifier model.
+    """
+    info = {
+        "pipeline_enabled": config.get("classifier", {}).get("enabled", True),
+        "confidence_threshold": config.get("classifier", {}).get("confidence_threshold", 0.6),
+        "agents": {
+            "agent1": {
+                "name": "Upstream Processing",
+                "status": "placeholder",
+                "description": "Replace with your Agent 1 implementation",
+            },
+            "agent2": {
+                "name": "DistilBERT Classification",
+                "status": "unknown",
+            },
+        },
+    }
+
+    # Try to get Agent 2 model info
+    try:
+        from app.agents.agent2 import _get_classifier
+        classifier = _get_classifier()
+        if classifier:
+            info["agents"]["agent2"]["status"] = "loaded"
+            info["agents"]["agent2"]["model_info"] = classifier.get_info()
+        else:
+            info["agents"]["agent2"]["status"] = "not_loaded"
+            info["agents"]["agent2"]["detail"] = (
+                "Train a model first: python train_model.py --data data/training_data.csv"
+            )
+    except Exception as e:
+        info["agents"]["agent2"]["status"] = "error"
+        info["agents"]["agent2"]["error"] = str(e)
+
+    return info
 
 
 # ─────────────────────────────────────────────────────────────────────────────

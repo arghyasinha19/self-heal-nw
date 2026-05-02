@@ -23,3 +23,8 @@ rabbitmq:
 server:
   port: 8000
   host: "0.0.0.0"
+
+classifier:
+  model_path: "models"                  # Directory containing the trained model artifacts
+  confidence_threshold: 0.6            # Below this confidence, label as "uncertain"
+  enabled: true                        # Master switch to enable/disable classification
